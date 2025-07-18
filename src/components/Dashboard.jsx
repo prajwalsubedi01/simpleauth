@@ -4,10 +4,13 @@ import { doc, getDoc } from "firebase/firestore";
 import { auth, db } from "../firebase/config";
 import { FiLogOut, FiDownload, FiUser } from "react-icons/fi";
 import { useNavigate } from "react-router-dom";
+import { getStorage, ref, getDownloadURL } from "firebase/storage";
+
 function Dashboard() {
   const [user, setUser] = useState(null);
   const [profileData, setProfileData] = useState(null);
   const [loading, setLoading] = useState(true);
+  const navigate = useNavigate();
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
@@ -16,7 +19,12 @@ function Dashboard() {
       if (currentUser) {
         const userDoc = await getDoc(doc(db, "users", currentUser.uid));
         if (userDoc.exists()) {
-          setProfileData(userDoc.data());
+          const data = userDoc.data();
+          setProfileData({
+            ...data,
+            // Ensure we have the correct photoUrl from Firestore
+            photoUrl: data.photoUrl || null
+          });
         }
       }
 
@@ -29,23 +37,46 @@ function Dashboard() {
   const handleLogout = async () => {
     try {
       await signOut(auth);
-      Navigate("/")
+      navigate("/"); // redirect to homepage or login
     } catch (error) {
       console.error("Logout error:", error);
     }
   };
 
-  const downloadProfile = () => {
-    if (profileData?.profilePic) {
-      const link = document.createElement('a');
-      link.href = profileData.profilePic;
-      link.download = `profile-${user.email.split('@')[0]}.jpg`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-    }
-  };
+const downloadProfile = async () => {
+  if (!profileData?.photoUrl) {
+    alert('No profile image available to download');
+    return;
+  }
 
+  try {
+    // 1. Get fresh download URL using Firebase SDK
+    const storage = getStorage();
+    const path = decodeURIComponent(profileData.photoUrl)
+      .split('/o/')[1]
+      .split('?')[0];
+    const imageRef = ref(storage, path);
+    const downloadURL = await getDownloadURL(imageRef);
+
+    // 2. Create hidden link with download attribute
+    const link = document.createElement('a');
+    link.href = downloadURL;
+    link.download = `profile_${user.email.split('@')[0]}.jpg`; // Forces download
+    link.style.display = 'none';
+    
+    // 3. Additional headers to force download (works in most browsers)
+    link.setAttribute('download', '');
+    link.setAttribute('target', '_self'); // Prevents new tab
+
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+
+  } catch (error) {
+    console.error('Download failed:', error);
+    alert('Failed to download image. Please try again.');
+  }
+};
   if (loading) {
     return (
       <div className="flex justify-center items-center h-screen">
@@ -61,10 +92,11 @@ function Dashboard() {
         <div className="max-w-7xl mx-auto px-4 py-4 sm:px-6 lg:px-8 flex justify-between items-center">
           <h1 className="text-xl font-bold text-gray-900">Dashboard</h1>
           <div className="flex space-x-4">
-            {profileData?.profilePic && (
+            {profileData?.photoUrl && (
               <button
                 onClick={downloadProfile}
                 className="flex items-center px-3 py-2 text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 transition-colors"
+                disabled={!profileData?.photoUrl}
               >
                 <FiDownload className="mr-2" />
                 Download Profile
@@ -82,14 +114,14 @@ function Dashboard() {
       </header>
 
       {/* Main Content */}
-      <main className="max-w-7xl mx-auto px-4 py-8 sm:px-6 lg:px-8">
+      <main className="max-w-4xl mx-auto px-4 py-8 sm:px-6 lg:px-8">
         {user ? (
           <div className="bg-white overflow-hidden shadow rounded-lg">
             <div className="px-4 py-5 sm:p-6">
               <div className="flex flex-col items-center">
-                {profileData?.profilePic ? (
+                {profileData?.photoUrl ? (
                   <img
-                    src={profileData.profilePic}
+                    src={profileData.photoUrl}
                     alt="Profile"
                     className="w-32 h-32 rounded-full object-cover border-4 border-white shadow-lg"
                   />
@@ -99,21 +131,39 @@ function Dashboard() {
                   </div>
                 )}
                 <h2 className="mt-4 text-2xl font-bold text-gray-900">
-                  Welcome, {user.displayName || user.email.split('@')[0]}!
+                  Welcome, {profileData?.fullName || user.displayName || user.email.split('@')[0]}!
                 </h2>
-                <p className="mt-2 text-gray-600">{user.email}</p>
+                <p className="mt-2 text-gray-600">{profileData?.email || user.email}</p>
+
+                {/* Info Section */}
                 <div className="mt-6 bg-blue-50 p-4 rounded-lg w-full max-w-md">
                   <h3 className="text-lg font-medium text-blue-800">Account Information</h3>
-                  <div className="mt-2 grid grid-cols-2 gap-4">
+                  <div className="mt-4 grid grid-cols-2 gap-4 text-sm">
                     <div>
-                      <p className="text-sm text-gray-500">Account Created</p>
-                      <p className="text-sm font-medium">
-                        {profileData?.createdAt?.toDate().toLocaleDateString() || 'N/A'}
+                      <p className="text-gray-500">Full Name</p>
+                      <p className="font-medium">{profileData?.fullName || "N/A"}</p>
+                    </div>
+                    <div>
+                      <p className="text-gray-500">Phone</p>
+                      <p className="font-medium">{profileData?.phone || "N/A"}</p>
+                    </div>
+                    <div>
+                      <p className="text-gray-500">Email</p>
+                      <p className="font-medium">{profileData?.email || user.email}</p>
+                    </div>
+                    <div>
+                      <p className="text-gray-500">UID</p>
+                      <p className="font-medium break-all">{profileData?.uid || user.uid}</p>
+                    </div>
+                    <div>
+                      <p className="text-gray-500">Created At</p>
+                      <p className="font-medium">
+                        {profileData?.createdAt?.toDate().toLocaleDateString() || "N/A"}
                       </p>
                     </div>
                     <div>
-                      <p className="text-sm text-gray-500">Last Login</p>
-                      <p className="text-sm font-medium">
+                      <p className="text-gray-500">Last Login</p>
+                      <p className="font-medium">
                         {new Date(user.metadata.lastSignInTime).toLocaleString()}
                       </p>
                     </div>
